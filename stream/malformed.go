@@ -5,10 +5,9 @@ package stream
 // chunks will arrive (unclosed tags and comments, dangling quotes, truncated
 // encoding units).
 type malformationTracker struct {
-	events              []Malformation
-	tagStack            []tagFrame
-	openComments        int
-	pendingTruncation   bool
+	events       []Malformation
+	tagStack     []tagFrame
+	openComments int
 }
 
 type tagFrame struct {

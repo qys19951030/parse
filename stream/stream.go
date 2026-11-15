@@ -232,9 +232,11 @@ type Parser struct {
 
 	drv     *driver
 	lines   *lineIndex
+	decLine *lineIndex
 	malfs   *malformationTracker
 	enc     *detector
 	queue   []Token
+	decodedTotal int
 	closed  bool
 	started bool
 	err     error
@@ -251,8 +253,9 @@ func NewParser(format Format, opts ...Option) *Parser {
 	p := &Parser{
 		format: format,
 		lines:  newLineIndex(),
+		decLine: newLineIndex(),
 		malfs:  newMalformationTracker(),
-		enc:    newDetector(),
+		enc:    newDetector(format),
 		stats: Stats{
 			TokenCounts: map[Format]int{},
 			KindCounts:  map[Kind]int{},
@@ -306,14 +309,32 @@ func (p *Parser) Feed(chunk []byte) error {
 		p.err = err
 		return err
 	}
-	if truncated {
-		p.malfs.pendingTruncation = true
-	}
+	p.recordTruncation(decoded, truncated)
 
 	p.drv.feed(decoded)
 	p.started = true
 	p.drainToQueue()
 	return nil
+}
+
+// recordTruncation turns a decoder truncation flag into a malformed-input
+// event positioned at the end of the decoded document. decLine has seen
+// every decoded byte so far, so its position is the position of the
+// dangling unit.
+func (p *Parser) recordTruncation(decoded []byte, truncated bool) {
+	p.decLine.consume(decoded)
+	p.decodedTotal += len(decoded)
+	if !truncated {
+		return
+	}
+	line, col := p.decLine.position()
+	p.malfs.events = append(p.malfs.events, Malformation{
+		Offset: p.decodedTotal,
+		Line:   line,
+		Col:    col,
+		Kind:   MalTruncatedEncodingUnit,
+		Reason: "incomplete multi-byte encoding unit at end of input",
+	})
 }
 
 // End signals that the whole document has been fed. It flushes the retained
@@ -333,10 +354,7 @@ func (p *Parser) End() error {
 		p.err = err
 		return err
 	}
-	p.stats.DecodedBytes += len(decoded)
-	if truncated {
-		p.malfs.pendingTruncation = true
-	}
+	p.recordTruncation(decoded, truncated)
 	p.drv.feed(decoded)
 	p.started = true
 
