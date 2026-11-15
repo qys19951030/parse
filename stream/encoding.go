@@ -28,8 +28,9 @@ type detector struct {
 	enc     Encoding
 	bomSize int
 
-	raw  []byte // raw bytes accumulated before the decision
-	tail []byte // raw unconsumed bytes (incomplete trailing unit) after it
+	raw      []byte // raw bytes accumulated before the decision
+	tail     []byte // raw unconsumed bytes (incomplete trailing unit) after it
+	rawTotal int    // total raw bytes supplied, including any BOM
 }
 
 // newDetector returns an undecided detector.
@@ -40,11 +41,16 @@ func newDetector(format Format) *detector {
 // decode transforms one raw chunk into tokenizer-ready bytes, retaining an
 // incomplete trailing multi-byte unit for the next call. On the final call a
 // dangling unit is reported through truncated instead of being retained.
-func (dt *detector) decode(chunk []byte, final bool) (out []byte, truncated bool, err error) {
+// decode transforms one raw chunk into tokenizer-ready bytes, retaining an
+// incomplete trailing multi-byte unit for the next call. On the final call a
+// dangling unit is reported through truncRaw >= 0, giving its raw-document
+// start offset, instead of being retained.
+func (dt *detector) decode(chunk []byte, final bool) (out []byte, truncRaw int, err error) {
+	dt.rawTotal += len(chunk)
 	if !dt.decided {
 		dt.raw = append(dt.raw, chunk...)
 		if !dt.canDecide(final) {
-			return nil, false, nil
+			return nil, -1, nil
 		}
 		dt.decide()
 		// decide() moved the BOM-stripped prefix into tail, including an
@@ -55,14 +61,17 @@ func (dt *detector) decode(chunk []byte, final bool) (out []byte, truncated bool
 
 	remainder, decoded := decodeAll(dt.enc.Name, dt.tail, final)
 	if final {
-		// a non-empty remainder at end of input is a dangling encoding unit;
-		// decodeAll already emitted replacement bytes for it
-		truncated = len(remainder) > 0
+		if len(remainder) > 0 {
+			// the dangling unit occupies the last len(remainder) raw bytes
+			truncRaw = dt.rawTotal - len(remainder)
+		} else {
+			truncRaw = -1
+		}
 		dt.tail = dt.tail[:0]
 	} else {
 		dt.tail = append(dt.tail[:0], remainder...)
 	}
-	return decoded, truncated, nil
+	return decoded, truncRaw, nil
 }
 
 // canDecide reports whether the buffered prefix is sufficient to freeze the

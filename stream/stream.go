@@ -304,12 +304,12 @@ func (p *Parser) Feed(chunk []byte) error {
 		p.stats.TotalBytes += len(chunk)
 	}
 
-	decoded, truncated, err := p.enc.decode(chunk, false)
+	decoded, truncRaw, err := p.enc.decode(chunk, false)
 	if err != nil {
 		p.err = err
 		return err
 	}
-	p.recordTruncation(decoded, truncated)
+	p.recordTruncation(decoded, truncRaw)
 
 	p.drv.feed(decoded)
 	p.started = true
@@ -317,19 +317,17 @@ func (p *Parser) Feed(chunk []byte) error {
 	return nil
 }
 
-// recordTruncation turns a decoder truncation flag into a malformed-input
-// event positioned at the end of the decoded document. decLine has seen
-// every decoded byte so far, so its position is the position of the
-// dangling unit.
-func (p *Parser) recordTruncation(decoded []byte, truncated bool) {
+// recordTruncation turns a decoder truncation offset into a malformed-input
+// event. A negative offset means no dangling encoding unit was seen.
+func (p *Parser) recordTruncation(decoded []byte, truncRaw int) {
 	p.decLine.consume(decoded)
 	p.decodedTotal += len(decoded)
-	if !truncated {
+	if truncRaw < 0 {
 		return
 	}
 	line, col := p.decLine.position()
 	p.malfs.events = append(p.malfs.events, Malformation{
-		Offset: p.decodedTotal,
+		Offset: truncRaw,
 		Line:   line,
 		Col:    col,
 		Kind:   MalTruncatedEncodingUnit,
@@ -349,12 +347,12 @@ func (p *Parser) End() error {
 	p.closed = true
 
 	// flush any bytes still held by the decoder
-	decoded, truncated, err := p.enc.decode(nil, true)
+	decoded, truncRaw, err := p.enc.decode(nil, true)
 	if err != nil {
 		p.err = err
 		return err
 	}
-	p.recordTruncation(decoded, truncated)
+	p.recordTruncation(decoded, truncRaw)
 	p.drv.feed(decoded)
 	p.started = true
 
