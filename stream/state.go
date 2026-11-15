@@ -135,6 +135,11 @@ func (d *driver) init() {
 	if d.initialized {
 		return
 	}
+	size := 4096
+	if d.p != nil && d.p.opt.bufSize > 0 {
+		size = d.p.opt.bufSize
+	}
+	d.pending = make([]byte, 0, size)
 	d.in = parse.NewInputBytes(nil)
 	switch d.format {
 	case HTML:

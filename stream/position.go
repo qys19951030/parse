@@ -8,8 +8,8 @@ import "unicode/utf8"
 // and "\r\n" (matching parse.Position); U+2028 and U+2029 are also treated as
 // line separators for consistency with parse.Position's rune handling.
 type lineIndex struct {
-	line int    // line number of the current position, 1-based
-	col  int    // rune column of the current position, 1-based
+	line   int  // line number of the current position, 1-based
+	col    int  // rune column of the current position, 1-based
 	prevCR bool // previous byte was '\r', so the next '\n' is not a new line
 }
 

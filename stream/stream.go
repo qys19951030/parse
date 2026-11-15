@@ -56,15 +56,15 @@ type Kind int
 const (
 	KindError Kind = iota
 	KindText
-	KindTagStart       // opening tag, element name is available on Token.Text
-	KindTagEnd         // closing tag
-	KindTagClose       // the ">" ending an opening tag
-	KindTagSelfClose   // "/>", "?>" and similar void/PI closings
-	KindAttribute      // attribute key/value pair
+	KindTagStart     // opening tag, element name is available on Token.Text
+	KindTagEnd       // closing tag
+	KindTagClose     // the ">" ending an opening tag
+	KindTagSelfClose // "/>", "?>" and similar void/PI closings
+	KindAttribute    // attribute key/value pair
 	KindComment
 	KindDoctype
 	KindCDATA
-	KindPI             // processing instruction marker
+	KindPI // processing instruction marker
 	KindWhitespace
 	KindLineTerminator
 	KindIdentifier
@@ -195,14 +195,14 @@ type Encoding struct {
 // parsing process and stable across repeated parses of the same input.
 type Stats struct {
 	Chunks        int            // number of non-final Feed calls
-	TotalBytes     int           // raw bytes handed to Feed, including any BOM
-	DecodedBytes   int           // bytes handed to the underlying tokenizer
-	TokenCounts    map[Format]int // tokens emitted, keyed by the parser's format
-	KindCounts     map[Kind]int   // tokens emitted, keyed by unified kind
-	Malformations  int            // number of recovered malformed-input events
-	Records        int            // structured records produced by the extractor
-	MissingFields  int            // rule fields absent on matched records
-	Encoding       string         // effective encoding name
+	TotalBytes    int            // raw bytes handed to Feed, including any BOM
+	DecodedBytes  int            // bytes handed to the underlying tokenizer
+	TokenCounts   map[Format]int // tokens emitted, keyed by the parser's format
+	KindCounts    map[Kind]int   // tokens emitted, keyed by unified kind
+	Malformations int            // number of recovered malformed-input events
+	Records       int            // structured records produced by the extractor
+	MissingFields int            // rule fields absent on matched records
+	Encoding      string         // effective encoding name
 }
 
 // Option configures a Parser at construction time.
@@ -230,17 +230,17 @@ type Parser struct {
 	format Format
 	opt    options
 
-	drv     *driver
-	lines   *lineIndex
-	decLine *lineIndex
-	malfs   *malformationTracker
-	enc     *detector
-	queue   []Token
+	drv          *driver
+	lines        *lineIndex
+	decLine      *lineIndex
+	malfs        *malformationTracker
+	enc          *detector
+	queue        []Token
 	decodedTotal int
-	closed  bool
-	started bool
-	err     error
-	stats   Stats
+	closed       bool
+	started      bool
+	err          error
+	stats        Stats
 }
 
 type options struct {
@@ -251,11 +251,11 @@ type options struct {
 // NewParser returns a streaming parser for the given format.
 func NewParser(format Format, opts ...Option) *Parser {
 	p := &Parser{
-		format: format,
-		lines:  newLineIndex(),
+		format:  format,
+		lines:   newLineIndex(),
 		decLine: newLineIndex(),
-		malfs:  newMalformationTracker(),
-		enc:    newDetector(format),
+		malfs:   newMalformationTracker(),
+		enc:     newDetector(format),
 		stats: Stats{
 			TokenCounts: map[Format]int{},
 			KindCounts:  map[Kind]int{},

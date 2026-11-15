@@ -28,7 +28,7 @@ type Record struct {
 type extractFrame struct {
 	name   []byte
 	depth  int
-	rule   *Rule       // rule whose path matches this element, nil otherwise
+	rule   *Rule // rule whose path matches this element, nil otherwise
 	fields map[string][]byte
 	seen   map[string]bool
 	text   []byte // direct text of this element only
