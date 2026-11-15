@@ -6,10 +6,15 @@ import "io"
 // in-document declaration, then content sniffing with a deterministic utf-8
 // fallback. The decision is made once, on the first bytes seen, and never
 // changes, so repeated parses of the same document agree.
+//
+// This step wires the streaming decode path in identity (utf-8, BOM kept for
+// now); BOM stripping, declaration/sniff handling and the UTF-16/32 decoders
+// arrive in the next implementation step.
 type detector struct {
-	dec     io.Reader // streaming decoder for the effective encoding
+	dec     io.Reader // reserved for the pluggable decoders
 	decided bool
 	enc     Encoding
+	tail    []byte // incomplete trailing encoding unit retained between feeds
 }
 
 // newDetector returns an undecided detector.
@@ -17,18 +22,26 @@ func newDetector() *detector {
 	return &detector{}
 }
 
-// decide inspects the first raw chunk (plus a retained prefix when needed)
-// and freezes the effective encoding. Subsequent calls are no-ops.
+// decide freezes the effective encoding from the first raw bytes.
 func (dt *detector) decide(firstChunk []byte) error {
+	if dt.decided {
+		return nil
+	}
+	dt.decided = true
+	dt.enc = Encoding{Name: "utf-8", Source: EncFromSniff}
 	return nil
 }
 
-// decode transforms one raw chunk into bytes understood by the format
-// tokenizers, retaining incomplete trailing encoding units for the next call.
-// On the final call (final == true) a dangling unit is reported rather than
-// retained.
+// decode passes raw bytes through unchanged while retaining no state. The
+// real encoders replace this body in the encoding step without changing the
+// Parser wiring.
 func (dt *detector) decode(chunk []byte, final bool) (out []byte, truncated bool, err error) {
-	return nil, false, nil
+	if !dt.decided && len(chunk) > 0 {
+		if err := dt.decide(chunk); err != nil {
+			return nil, false, err
+		}
+	}
+	return chunk, false, nil
 }
 
 // sniffBOM returns the encoding advertised by a byte order mark and its byte

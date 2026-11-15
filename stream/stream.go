@@ -14,6 +14,11 @@
 // themselves are not modified.
 package stream
 
+import "errors"
+
+// errFeedAfterEnd is returned when Feed is called after End.
+var errFeedAfterEnd = errors.New("stream: Feed called after End")
+
 // Format selects one of the four underlying tokenizers.
 type Format int
 
@@ -225,10 +230,15 @@ type Parser struct {
 	format Format
 	opt    options
 
-	// driver state, populated in later implementation steps
-	closed bool
-	err    error
-	stats  Stats
+	drv     *driver
+	lines   *lineIndex
+	malfs   *malformationTracker
+	enc     *detector
+	queue   []Token
+	closed  bool
+	started bool
+	err     error
+	stats   Stats
 }
 
 type options struct {
@@ -240,6 +250,9 @@ type options struct {
 func NewParser(format Format, opts ...Option) *Parser {
 	p := &Parser{
 		format: format,
+		lines:  newLineIndex(),
+		malfs:  newMalformationTracker(),
+		enc:    newDetector(),
 		stats: Stats{
 			TokenCounts: map[Format]int{},
 			KindCounts:  map[Kind]int{},
@@ -249,6 +262,7 @@ func NewParser(format Format, opts ...Option) *Parser {
 	for _, opt := range opts {
 		opt(p)
 	}
+	p.drv = newDriver(p, format)
 	return p
 }
 
@@ -275,41 +289,144 @@ func WithExtractor(e *Extractor) Option {
 // tokens become available through Next, incomplete tails are retained until
 // the next Feed. Feed must not be called after End.
 func (p *Parser) Feed(chunk []byte) error {
-	return p.err
+	if p.err != nil {
+		return p.err
+	}
+	if p.closed {
+		p.err = errFeedAfterEnd
+		return p.err
+	}
+	if len(chunk) > 0 {
+		p.stats.Chunks++
+		p.stats.TotalBytes += len(chunk)
+	}
+
+	decoded, truncated, err := p.enc.decode(chunk, false)
+	if err != nil {
+		p.err = err
+		return err
+	}
+	if truncated {
+		p.malfs.pendingTruncation = true
+	}
+
+	p.drv.feed(decoded)
+	p.started = true
+	p.drainToQueue()
+	return nil
 }
 
 // End signals that the whole document has been fed. It flushes the retained
 // tail, finalizes malformed-input bookkeeping and freezes the statistics.
 func (p *Parser) End() error {
-	return p.err
+	if p.err != nil {
+		return p.err
+	}
+	if p.closed {
+		return nil
+	}
+	p.closed = true
+
+	// flush any bytes still held by the decoder
+	decoded, truncated, err := p.enc.decode(nil, true)
+	if err != nil {
+		p.err = err
+		return err
+	}
+	p.stats.DecodedBytes += len(decoded)
+	if truncated {
+		p.malfs.pendingTruncation = true
+	}
+	p.drv.feed(decoded)
+	p.started = true
+
+	tokens := p.drv.finish(p.malfs.eventsRef())
+	for i := range tokens {
+		p.accept(tokens[i])
+	}
+	p.malfs.finalizeEvents(p.drv)
+	p.freezeStats()
+	return nil
+}
+
+// drainToQueue runs the continuation driver over the retained bytes and
+// queues every token that is fully determined at the current chunk boundary.
+func (p *Parser) drainToQueue() {
+	tokens := p.drv.drain(p.malfs.eventsRef())
+	for i := range tokens {
+		p.accept(tokens[i])
+	}
+}
+
+// accept registers one emitted token with statistics, the malformation
+// tracker and the attached extractor, then queues it for Next.
+func (p *Parser) accept(t Token) {
+	p.stats.TokenCounts[t.Format]++
+	p.stats.KindCounts[t.Kind]++
+	p.stats.DecodedBytes += t.End - t.Start
+	p.malfs.observe(t)
+	if p.opt.extractor != nil {
+		p.opt.extractor.observe(t)
+	}
+	p.queue = append(p.queue, t)
 }
 
 // Next returns the next unified token and true, or a zero Token and false
 // when no fully determined token is currently available. After End, false
 // means the document is exhausted.
 func (p *Parser) Next() (Token, bool) {
-	return Token{}, false
+	if len(p.queue) == 0 {
+		return Token{}, false
+	}
+	t := p.queue[0]
+	p.queue = p.queue[1:]
+	return t, true
+}
+
+// Drain returns all currently available tokens at once, emptying the queue.
+func (p *Parser) Drain() []Token {
+	out := p.queue
+	p.queue = nil
+	return out
 }
 
 // Malformations returns the recovered malformed-input events in document
 // order. The slice is frozen at End.
 func (p *Parser) Malformations() []Malformation {
-	return nil
+	return p.malfs.events
 }
 
 // Encoding returns the document-driven encoding decision. The decision is
 // made on the first non-empty Feed and does not change afterwards.
 func (p *Parser) Encoding() Encoding {
-	return Encoding{}
+	return p.enc.enc
 }
 
 // Stats returns the parse statistics accumulated so far.
 func (p *Parser) Stats() Stats {
-	return p.stats
+	stats := p.stats
+	stats.Malformations = p.malfs.count()
+	if p.opt.extractor != nil {
+		stats.Records = len(p.opt.extractor.Records())
+		stats.MissingFields = p.opt.extractor.Missing()
+	}
+	if p.enc.enc.Name != "" {
+		stats.Encoding = p.enc.enc.Name
+	}
+	return stats
 }
 
 // Err returns the first fatal error, if any. Malformed-input recoveries are
 // not errors and are reported through Malformations instead.
 func (p *Parser) Err() error {
 	return p.err
+}
+
+func (p *Parser) freezeStats() {
+	p.stats.Malformations = p.malfs.count()
+	p.stats.Encoding = p.enc.enc.Name
+	if p.opt.extractor != nil {
+		p.stats.Records = len(p.opt.extractor.Records())
+		p.stats.MissingFields = p.opt.extractor.Missing()
+	}
 }

@@ -5,8 +5,10 @@ package stream
 // chunks will arrive (unclosed tags and comments, dangling quotes, truncated
 // encoding units).
 type malformationTracker struct {
-	events  []Malformation
-	tagStack []tagFrame
+	events              []Malformation
+	tagStack            []tagFrame
+	openComments        int
+	pendingTruncation   bool
 }
 
 type tagFrame struct {
@@ -19,22 +21,18 @@ func newMalformationTracker() *malformationTracker {
 	return &malformationTracker{}
 }
 
+// eventsRef returns a pointer to the event slice so the driver can append
+// lexer-level recoveries.
+func (m *malformationTracker) eventsRef() *[]Malformation {
+	return &m.events
+}
+
 // observe feeds one emitted token to the stack-based tag/comment bookkeeping.
 func (m *malformationTracker) observe(t Token) {}
 
-// scanCharRefs records illegal character references found inside textual
-// content and attribute values.
-func (m *malformationTracker) scanCharRefs(b []byte, offset int) {}
-
-// lexerError records a non-EOF error returned by a native lexer.
-func (m *malformationTracker) lexerError(offset int, reason string) {}
-
-// finalize appends the end-of-input malformations (unclosed tags, unclosed
-// comments, dangling attribute quotes, truncated encoding units) given the
-// retained tail and its document base offset.
-func (m *malformationTracker) finalize(pending []byte, base int, truncatedEncodingUnit bool) []Malformation {
-	return m.events
-}
+// finalizeEvents appends the end-of-input malformations once the driver has
+// drained the retained tail.
+func (m *malformationTracker) finalizeEvents(d *driver) {}
 
 // count returns the number of recorded events.
 func (m *malformationTracker) count() int {

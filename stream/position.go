@@ -1,30 +1,71 @@
 package stream
 
-// lineIndex maps document-relative byte offsets to 1-based line and rune
-// column numbers. It grows incrementally as bytes are emitted, so offsets
-// never require rescanning the document. Newlines are "\n", "\r" and "\r\n",
-// matching parse.Position.
+import "unicode/utf8"
+
+// lineIndex tracks the 1-based line and rune column of the next byte to be
+// consumed. It advances incrementally as tokens are emitted, so source
+// positions never require rescanning earlier chunks. Newlines are "\n", "\r"
+// and "\r\n" (matching parse.Position); U+2028 and U+2029 are also treated as
+// line separators for consistency with parse.Position's rune handling.
 type lineIndex struct {
-	lineStarts []int // byte offset at which each line starts, line 1 at 0
-	line       int   // line of the last consumed position
-	colBytes   int   // bytes consumed on the current line
+	line int    // line number of the current position, 1-based
+	col  int    // rune column of the current position, 1-based
+	prevCR bool // previous byte was '\r', so the next '\n' is not a new line
 }
 
-// newLineIndex returns an empty line index positioned at line 1, column 1.
+// newLineIndex returns an index positioned at line 1, column 1.
 func newLineIndex() *lineIndex {
-	return &lineIndex{lineStarts: []int{0}, line: 1}
+	return &lineIndex{line: 1, col: 1}
 }
 
-// consume records one decoded byte and updates the line counters. It must be
-// called with every byte in order.
-func (li *lineIndex) consume(b byte) {}
-
-// positionAt returns line and 1-based rune column for a document byte offset.
-// Columns count runes, matching parse.Position semantics.
-func (li *lineIndex) positionAt(offset int, doc []byte) (line, col int) {
-	return 1, 1
+// consume records one emitted byte sequence, in document order.
+func (li *lineIndex) consume(b []byte) {
+	for i := 0; i < len(b); {
+		c := b[i]
+		if c == '\r' {
+			li.line++
+			li.col = 1
+			li.prevCR = true
+			i++
+			continue
+		}
+		if c == '\n' {
+			if li.prevCR {
+				// part of the preceding "\r\n", already counted
+				li.prevCR = false
+				i++
+				continue
+			}
+			li.line++
+			li.col = 1
+			i++
+			continue
+		}
+		li.prevCR = false
+		if c < 0x80 {
+			li.col++
+			i++
+			continue
+		}
+		r, n := utf8.DecodeRune(b[i:])
+		if r == utf8.RuneError && n == 1 {
+			// invalid byte: count it as one column, keep streaming
+			li.col++
+			i++
+			continue
+		}
+		if r == 0x2028 || r == 0x2029 {
+			li.line++
+			li.col = 1
+		} else {
+			li.col++
+		}
+		i += n
+	}
 }
 
-// addToken fills Start, End, Line and Col on t using the pending buffer and
-// document base offset.
-func (d *driver) position(t *Token) {}
+// position returns the line and column at which the next consumed byte will
+// start.
+func (li *lineIndex) position() (line, col int) {
+	return li.line, li.col
+}
